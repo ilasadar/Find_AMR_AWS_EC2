@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Activate the conda environment
+source activate AMR
+
+# Check if a file path is provided
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 /path/to/textfile" > Download_SRR.out
+    exit 1
+fi
+
+# Get the directory of the file
+DIR=$(dirname "$1")
+
+# Change to the directory where the text file is located
+cd "$DIR"
+
+# Read the SRR IDs from the file and download the data
+while read -r srr_id; do
+    echo "Downloading $srr_id..." >> Download_SRR.out
+    nohup sh -c "prefetch $srr_id && fastq-dump --split-files --gzip $srr_id && rm -r $srr_id" >> Download_SRR.out 2>&1 &
+done < "$1"
+
+echo "Downloads started in the background."

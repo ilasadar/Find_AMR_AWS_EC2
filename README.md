@@ -11,5 +11,6 @@ AMR /path/to/paired_end_files {organism}
 
 or
 
-nohup AMR /path/to/paired_end_files {organism}  output.out 2> error.out & 
+nohup AMR /path/to/paired_end_files {organism} > output.out 2> error.out & 
 
+Paired-end files should have *_1.fastq.gz and *_2.fastq.gz format

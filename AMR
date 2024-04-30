@@ -16,7 +16,7 @@ echo -e "Hello! Welcome to the AMR script. Here's how to use it:\n\n\
 5. If you want to update the RGI Main database, follow the instructions provided at the following link:\n\
    https://github.com/arpcard/rgi/blob/master/docs/rgi_load.rst\n\
    Please ensure that you place the updated database in the /home/ubuntu/Bioinf folder as localDB (default).\n\
-Thank you for using the AMR script!"
+Thank you for using the AMR script :)"
 exit 1
 fi
 

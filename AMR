@@ -1,0 +1,115 @@
+#!/bin/bash
+
+# Check if the user provided two arguments
+if [ "$#" -ne 2 ]; then
+echo -e "Hello! Welcome to the AMR script. Here's how to use it:\n\n\
+1. To specify the path and the organism name, use the following format:\n\
+   AMR /path/to {organism name}\n\
+   Example: AMR /home/ubuntu/Bioinf Campylobacter\n\n\
+2. If you do not want to specify an organism, simply type 'na' in place of the organism name:\n\
+   Example: AMR /home/ubuntu/Bioinf na\n\n\
+3. To learn which organisms are supported by AMRFinder+, please visit the following link:\n\
+   https://github.com/evolarjun/amr/wiki/Curated-organisms\n\n\
+4. To update the AMRFinder+ database, please type:\n
+  conda activate AMR
+  amrfinder -u\n\n\
+5. If you want to update the RGI Main database, follow the instructions provided at the following link:\n\
+   https://github.com/arpcard/rgi/blob/master/docs/rgi_load.rst\n\
+   Please ensure that you place the updated database in the /home/ubuntu/Bioinf folder as localDB (default).\n\
+Thank you for using the AMR script!"
+exit 1
+fi
+
+# Get the current directory
+current_dir=$(pwd)
+
+# Check if the current directory is not /home/ubuntu/Bioinf
+if [[ "$current_dir" != "/home/ubuntu/Bioinf" ]]; then
+# If not, execute the command
+  ln -s /home/ubuntu/Bioinf/localDB localDB
+fi
+
+
+DIR_PATH="$1"
+organism="$2"
+DIR_PATH="${DIR_PATH%/}" # Remove trailing slash if present
+source activate AMR # Activate the conda environment
+DIR_PATH=$(realpath "$1")
+READS_DIR="$DIR_PATH"
+OUTPUT_DIR="$READS_DIR/plasmid_output"
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR2="$READS_DIR/genome_output"
+mkdir -p "$OUTPUT_DIR2"
+
+process_file_pair() {
+  R1=$1
+  R2=${R1/_1.fastq.gz/_2.fastq.gz}
+  BASE_NAME=$(basename "$R1" _1.fastq.gz)
+
+  # Setup individual output directories
+  PAIR_OUTPUT_DIR="$OUTPUT_DIR/${BASE_NAME}"
+  mkdir -p "$PAIR_OUTPUT_DIR"
+  AMR_DIR="$PAIR_OUTPUT_DIR/amrfinder"
+  RGI_DIR="$PAIR_OUTPUT_DIR/rgi-main"
+  mkdir -p "$AMR_DIR" "$RGI_DIR"
+
+  PAIR_OUTPUT_DIR2="$OUTPUT_DIR2/${BASE_NAME}"
+  mkdir -p "$PAIR_OUTPUT_DIR2"
+  PROKKA_DIR="$PAIR_OUTPUT_DIR2/prokka"
+  AMR_DIR2="$PAIR_OUTPUT_DIR2/amrfinder"
+  RGI_DIR2="$PAIR_OUTPUT_DIR2/rgi-main"
+  mkdir -p "$AMR_DIR2" "$RGI_DIR2" "$PROKKA_DIR"
+
+  # Run spades-plasmid
+  spades.py -o "$PAIR_OUTPUT_DIR" --plasmid -1 "$R1" -2 "$R2" -t $(nproc) -m 250
+  
+  # Run amrfinder-plasmid
+  amrfinder -n "$PAIR_OUTPUT_DIR/contigs.fasta" -o "$AMR_DIR/${BASE_NAME}_amrfinder.tsv" $( [[ "$organism" != "na" ]] && echo "-O $organism" )
+  
+  echo "running rgi-main-plasmid"
+
+  # Run rgi-plasmid
+  rgi main -i "$PAIR_OUTPUT_DIR/contigs.fasta" -o "$RGI_DIR/${BASE_NAME}_rgi" -t contig -a BLAST -n $(nproc) --clean --low_quality -d plasmid > "$RGI_DIR/rgi_main_plasmid.log" 2>&1
+  
+  # Run spades-genome
+  spades.py -o "$PAIR_OUTPUT_DIR2" -1 "$R1" -2 "$R2" -t $(nproc) -m 250
+  
+  # Run prokka-genome
+  prokka --cpus $(nproc) "$PAIR_OUTPUT_DIR2/contigs.fasta" --centre X --compliant --outdir "$PROKKA_DIR" --prefix "$BASE_NAME" --force --quiet $( [[ "$organism" != "na" ]] && echo "--genus $organism" ) >"$PROKKA_DIR/prokka.out" 2>"$PROKKA_DIR/prokka.err"
+
+  echo "running rgi-main-genome"
+  
+  # rgi main-genome
+  rgi main -i "$PROKKA_DIR/${BASE_NAME}.gff" -o "$RGI_DIR2/${BASE_NAME}_rgi" --local -a BLAST -d wgs -n $(nproc) --clean > "$RGI_DIR2/rgi_main_genome.log" 2>&1
+  
+  perl -pe '/^##FASTA/ && exit; s/(\W)Name=/$1OldName=/i; s/ID=([^;]+)/ID=$1;Name=$1/' "$PROKKA_DIR/${BASE_NAME}.gff"  > "$PROKKA_DIR/${BASE_NAME}_2.gff"
+
+  # Run amrfinder-genome
+  amrfinder -p "$PROKKA_DIR/${BASE_NAME}.faa" -n "$PROKKA_DIR/${BASE_NAME}.fna" -g "$PROKKA_DIR/${BASE_NAME}_2.gff" -o "$AMR_DIR2/${BASE_NAME}_amrfinder.tsv" $( [[ "$organism" != "na" ]] && echo "-O $organism" )
+
+  echo "$BASE_NAME processing complete."
+}
+
+# Start processing each file
+for file in "$READS_DIR"/*_1.fastq.gz; do
+  process_file_pair "$file"
+done
+
+echo "Combining AMRFinder results..."
+awk 'FNR==1 && NR!=1{next;} FNR==1{print "File_Name\t"$0;next;} {split(FILENAME,a,"/"); print a[length(a)-2] "_plasmid\t"$0}' $OUTPUT_DIR/*/amrfinder/*_amrfinder.tsv > "$READS_DIR/temp1_amrfinder.tsv"
+awk 'FNR==1 && NR!=1{next;} FNR==1{print "File_Name\t"$0;next;} {split(FILENAME,a,"/"); print a[length(a)-2] "_genome\t"$0}' $OUTPUT_DIR2/*/amrfinder/*_amrfinder.tsv > "$READS_DIR/temp2_amrfinder.tsv"
+awk 'FNR==1 && NR!=1{next;}{print}' "$READS_DIR/temp1_amrfinder.tsv" "$READS_DIR/temp2_amrfinder.tsv" > "$READS_DIR/combined_amrfinder.tsv"
+rm "$READS_DIR/temp1_amrfinder.tsv" "$READS_DIR/temp2_amrfinder.tsv"
+
+echo "Combining RGI-Main results..."
+awk 'FNR==1 && NR!=1{next;} FNR==1{print "File_Name\t"$0;next;} {split(FILENAME,a,"/"); print a[length(a)-2] "_plasmid\t"$0}' $OUTPUT_DIR/*/rgi-main/*.txt > "$READS_DIR/temp1_rgi.tsv"
+awk 'FNR==1 && NR!=1{next;} FNR==1{print "File_Name\t"$0;next;} {split(FILENAME,a,"/"); print a[length(a)-2] "_genome\t"$0}' $OUTPUT_DIR2/*/rgi-main/*.txt > "$READS_DIR/temp2_rgi.tsv"
+awk 'FNR==1 && NR!=1{next;}{print}' "$READS_DIR/temp1_rgi.tsv" "$READS_DIR/temp2_rgi.tsv" > "$READS_DIR/combined_rgi.tsv"
+rm "$READS_DIR/temp1_rgi.tsv" "$READS_DIR/temp2_rgi.tsv"
+
+echo "All processes completed."
+
+# Check if the current directory is not /home/ubuntu/Bioinf
+if [[ "$current_dir" != "/home/ubuntu/Bioinf" ]]; then
+  rm -r localDB
+fi  

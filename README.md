@@ -8,6 +8,8 @@ It is a bash script, Save the script as AMR (no need to add sh extension)
 **Usage: **
 
 AMR /path/to/paired_end_files {organism}
+
 or
+
 nohup AMR /path/to/paired_end_files {organism}  output.out 2> error.out & 
 
